@@ -55,6 +55,19 @@ services:
     networks:
       - app-network
 
+  # 5. File Manager (FileBrowser)
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: file_manager
+    user: "${UID}:${GID}"   # agar permission tidak bermasalah
+    volumes:
+      - ./src:/srv
+      - ./filebrowser.db:/database/filebrowser.db
+    ports:
+      - "9090:80"
+    networks:
+      - app-network
+
 # Setup Volume agar data DB tidak hilang saat container mati
 volumes:
   db_data:
