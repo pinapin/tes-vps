@@ -1,80 +1,149 @@
+version: '3.8'
+
 services:
-  # 1. Web Server (Nginx)
+  # 1. Web Server (Nginx) - Optimized
   webserver:
-    image: nginx:latest
+    image: nginx:alpine
     container_name: my_nginx
+    restart: unless-stopped
     ports:
       - "80:80"
     volumes:
-      - ./src:/var/www/html
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./src:/var/www/html:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - nginx_cache:/var/cache/nginx
     depends_on:
-      - php
-      - mysql
+      php:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  # 2. PHP-FPM
+  # 2. PHP-FPM - Optimized
   php:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: my_php
+    restart: unless-stopped
     volumes:
       - ./src:/var/www/html
+      - php_sessions:/var/lib/php/sessions
+    environment:
+      - PHP_MEMORY_LIMIT=256M
+      - PHP_UPLOAD_MAX_FILESIZE=64M
+      - PHP_POST_MAX_SIZE=64M
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm-healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  # 3. Database MySQL 8.3
+  # 3. Database MySQL 8.3 - Optimized
   mysql:
     image: mysql:8.3
     container_name: my_mysql
-    restart: always
+    restart: unless-stopped
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_connections=200
+      --innodb_buffer_pool_size=256M
+      --innodb_log_file_size=64M
     environment:
       MYSQL_DATABASE: my_database
       MYSQL_USER: user
       MYSQL_PASSWORD: user_password
       MYSQL_ROOT_PASSWORD: root_password
+      TZ: Asia/Jakarta
     volumes:
       - db_data:/var/lib/mysql
+      - ./mysql/conf.d:/etc/mysql/conf.d:ro
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "3306:3306"
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
-  # 4. phpMyAdmin
+  # 4. phpMyAdmin - Optimized
   phpmyadmin:
-    image: phpmyadmin/phpmyadmin
+    image: phpmyadmin:latest
     container_name: my_pma
+    restart: unless-stopped
     environment:
       PMA_HOST: mysql
       PMA_USER: root
       PMA_PASSWORD: root_password
+      PMA_ARBITRARY: 1
+      UPLOAD_LIMIT: 64M
+      MEMORY_LIMIT: 256M
+      MAX_EXECUTION_TIME: 600
     ports:
       - "8080:80"
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  # 5. File Browser (Fix Permission www-data)
+  # 5. File Browser - Optimized
   filebrowser:
     image: filebrowser/filebrowser:latest
     container_name: file_manager
-    user: "33:33"              # Gunakan UID/GID www-data (default PHP/Nginx)
+    restart: unless-stopped
+    user: "33:33"
     ports:
       - "9090:80"
     volumes:
       - ./src:/srv
       - ./filebrowser_data:/database
+      - ./filebrowser/.filebrowser.json:/.filebrowser.json:ro
     environment:
-      FB_BASEURL: ""           # optional
+      FB_BASEURL: ""
+      FB_NOAUTH: "false"
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-# Persist DB
+# Volumes - Persistent Storage
 volumes:
   db_data:
+    driver: local
+  php_sessions:
+    driver: local
+  nginx_cache:
+    driver: local
 
-# Network
+# Networks - Isolated Network
 networks:
   app-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
