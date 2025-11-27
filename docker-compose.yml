@@ -62,7 +62,7 @@ services:
     user: "${UID}:${GID}"   # agar permission tidak bermasalah
     volumes:
       - ./src:/srv
-      - ./filebrowser.db:/database/filebrowser.db
+      - ./filebrowser_data:/database
     ports:
       - "9090:80"
     networks:
